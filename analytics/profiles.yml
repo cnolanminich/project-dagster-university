@@ -4,6 +4,11 @@ dagster_dbt_university:
     dev:
       type: duckdb
       path: '../{{ env_var("DUCKDB_DATABASE", "data/staging/data.duckdb") }}'
+      schema: main
     prod:
       type: duckdb
       path: '{{ env_var("DUCKDB_DATABASE", "") }}'
+    clone_test:
+      type: duckdb
+      path: '../{{ env_var("DUCKDB_DATABASE", "data/staging/data.duckdb") }}'
+      schema: clone_test

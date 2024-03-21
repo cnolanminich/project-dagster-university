@@ -25,3 +25,8 @@ dbt_resource = DbtCliResource(
     project_dir=DBT_DIRECTORY,
     target=os.getenv("DAGSTER_ENVIRONMENT", "dev")
 )
+
+clone_dbt_resource = DbtCliResource(
+        project_dir=DBT_DIRECTORY,
+        target="clone_test"
+    )

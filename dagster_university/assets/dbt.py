@@ -1,11 +1,11 @@
 from dagster import AssetKey, AssetExecutionContext
-from dagster_dbt import dbt_assets, DbtCliResource, DagsterDbtTranslator
+from dagster_dbt import dbt_assets, DbtCliResource, DagsterDbtTranslator, DbtArtifacts
 
 import os
 import json
 
 from .constants import DBT_DIRECTORY
-from ..resources import dbt_resource
+from ..resources import clone_dbt_resource
 from ..partitions import daily_partition
 
 class CustomizedDagsterDbtTranslator(DagsterDbtTranslator):
@@ -31,34 +31,47 @@ class CustomizedDagsterDbtTranslator(DagsterDbtTranslator):
     def get_group_name(cls, dbt_resource_props):
         return dbt_resource_props["fqn"][1]
         
-if os.getenv("DAGSTER_DBT_PARSE_PROJECT_ON_LOAD"):
-    dbt_manifest_path = (
-        dbt_resource.cli(["--quiet", "parse"])
-        .wait()
-        .target_path.joinpath("manifest.json")
-    )
-else:
-    dbt_manifest_path = os.path.join(DBT_DIRECTORY, "target", "manifest.json")
+dbt_artifacts = DbtArtifacts(
+    project_dir=DBT_DIRECTORY,
+    prepare_command=["--quiet",
+                     "parse"],
+)
+DBT_MANIFEST = dbt_artifacts.manifest_path
+DBT_MANIFEST_FOLDER = os.path.dirname(dbt_artifacts.manifest_path)
+
+dbt_artifacts_clone = DbtArtifacts(
+    project_dir=DBT_DIRECTORY,
+    prepare_command=["--quiet",
+                     "parse",
+                     "--target",
+                     "clone_test"],
+)
+DBT_MANIFEST_CLONE = dbt_artifacts_clone.manifest_path
+DBT_MANIFEST_CLONE_PATH = os.path.dirname(dbt_artifacts.manifest_path)
 
 INCREMENTAL_SELECTOR = "config.materialized:incremental"
 
-@dbt_assets(
-    manifest=dbt_manifest_path,
-    dagster_dbt_translator=CustomizedDagsterDbtTranslator(),
-    exclude=INCREMENTAL_SELECTOR,
-)
-def dbt_analytics(context: AssetExecutionContext, dbt: DbtCliResource):
-    dbt_build_invocation = dbt.cli(["build"], context=context)
 
+@dbt_assets(
+    manifest=DBT_MANIFEST_CLONE,
+    dagster_dbt_translator=CustomizedDagsterDbtTranslator(),
+    exclude=INCREMENTAL_SELECTOR
+)
+def dbt_analytics(context: AssetExecutionContext, dbt_clone: DbtCliResource, dbt: DbtCliResource):
+    #dbt.cli(args=['run-operation','set_up_macro'], context=context)
+    dbt_clone.cli(args=['clone',"--state",DBT_MANIFEST_FOLDER], context=context)
+    dbt_build_invocation = dbt_clone.cli(["build"], context=context)
+    dbt.cli(args=['clone', "--state",DBT_MANIFEST_CLONE_PATH, "--full-refresh"], context=context)
     yield from dbt_build_invocation.stream()
 
+    dbt_clone.cli(args=['run-operation','drop_target_schema_if_exists'])
     run_results_json = dbt_build_invocation.get_artifact("run_results.json")
     for result in run_results_json["results"]:
         context.log.debug(result["compiled_code"])
 
 
 @dbt_assets(
-    manifest=dbt_manifest_path,
+    manifest=DBT_MANIFEST,
     dagster_dbt_translator=CustomizedDagsterDbtTranslator(),
     select=INCREMENTAL_SELECTOR,
     partitions_def=daily_partition,
